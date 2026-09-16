@@ -9,6 +9,7 @@ const DIRS = {
   down: { x: 0, y: 1 },
 };
 const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
+const GHOST_TIE_BREAK = [ 'up', 'left', 'down', 'right' ];
 
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
@@ -71,6 +72,64 @@ function canMove( grid, x, y, dir, actor ) {
   // Tunel: salir por un borde en la fila del tunel siempre es valido.
   if ( ty === TUNNEL_ROW && ( tx < 0 || tx >= grid[ 0 ].length ) ) return true;
   return !isWall( grid, tx, ty, actor );
+}
+
+function nextCell( grid, x, y, dir, actor ) {
+  const d = DIRS[ dir ];
+  if ( !d ) return null;
+
+  let nx = x + d.x;
+  const ny = y + d.y;
+  if ( ny === TUNNEL_ROW && ( nx < 0 || nx >= grid[ 0 ].length ) ) {
+    nx = nx < 0 ? grid[ 0 ].length - 1 : 0;
+  }
+  if ( !canMove( grid, x, y, dir, actor ) ) return null;
+  return { x: nx, y: ny };
+}
+
+function nearestTraversable( grid, target, actor ) {
+  const tx = Math.round( target.x );
+  const ty = Math.round( target.y );
+  if ( !isWall( grid, tx, ty, actor ) ) return { x: tx, y: ty };
+
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for ( let y = 0; y < grid.length; y++ ) {
+    for ( let x = 0; x < grid[ 0 ].length; x++ ) {
+      if ( isWall( grid, x, y, actor ) ) continue;
+      const distance = Math.abs( x - tx ) + Math.abs( y - ty );
+      if ( distance < nearestDistance ) {
+        nearest = { x, y };
+        nearestDistance = distance;
+      }
+    }
+  }
+  return nearest;
+}
+
+function shortestDirection( grid, start, target, actor ) {
+  const goal = nearestTraversable( grid, target, actor );
+  if ( !goal ) return null;
+  if ( start.x === goal.x && start.y === goal.y ) return null;
+
+  const queue = [ { x: start.x, y: start.y, firstDir: null } ];
+  const visited = new Set( [ `${ start.x },${ start.y }` ] );
+  let index = 0;
+
+  while ( index < queue.length ) {
+    const current = queue[ index++ ];
+    for ( const dir of GHOST_TIE_BREAK ) {
+      const cell = nextCell( grid, current.x, current.y, dir, actor );
+      if ( !cell ) continue;
+      const key = `${ cell.x },${ cell.y }`;
+      if ( visited.has( key ) ) continue;
+      const firstDir = current.firstDir || dir;
+      if ( cell.x === goal.x && cell.y === goal.y ) return firstDir;
+      visited.add( key );
+      queue.push( { x: cell.x, y: cell.y, firstDir } );
+    }
+  }
+  return null;
 }
 
 function wrapTunnel( a, width ) {
