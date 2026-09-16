@@ -90,13 +90,17 @@ function nextCell( grid, x, y, dir, actor ) {
 function nearestTraversable( grid, target, actor ) {
   const tx = Math.round( target.x );
   const ty = Math.round( target.y );
-  if ( !isWall( grid, tx, ty, actor ) ) return { x: tx, y: ty };
+  const isTargetValid = ( x, y ) => (
+    y >= 0 && y < grid.length && x >= 0 && x < grid[ 0 ].length &&
+    grid[ y ][ x ] !== 1 && grid[ y ][ x ] !== 3
+  );
+  if ( isTargetValid( tx, ty ) ) return { x: tx, y: ty };
 
   let nearest = null;
   let nearestDistance = Infinity;
   for ( let y = 0; y < grid.length; y++ ) {
     for ( let x = 0; x < grid[ 0 ].length; x++ ) {
-      if ( isWall( grid, x, y, actor ) ) continue;
+      if ( !isTargetValid( x, y ) ) continue;
       const distance = Math.abs( x - tx ) + Math.abs( y - ty );
       if ( distance < nearestDistance ) {
         nearest = { x, y };
@@ -172,32 +176,33 @@ function movePacman( game ) {
 function decideGhost( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+  const distance = g.kind === 'ambusher' ? 4 : 2;
+  const ahead = ( amount ) => {
+    const d = DIRS[ p.dir ];
+    return { x: px + d.x * amount, y: py + d.y * amount };
+  };
 
-  const options = Object.keys( DIRS ).filter(
-    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
-  );
-  // Sin salida (callejon): permitir el giro de 180.
-  const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
-
+  let target;
   if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+    target = { x: px, y: py };
+  } else if ( g.kind === 'ambusher' ) {
+    target = ahead( distance );
+  } else if ( g.kind === 'patroller' ) {
+    target = ahead( distance );
+    if ( grid[ target.y ]?.[ target.x ] === 1 || grid[ target.y ]?.[ target.x ] === 3 ||
+      target.x < 0 || target.x >= grid[ 0 ].length || target.y < 0 || target.y >= grid.length ) {
+      target = { x: 1, y: 1 };
     }
-    g.dir = best;
   } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
+    target = Math.abs( px - Math.round( g.x ) ) + Math.abs( py - Math.round( g.y ) ) >= 8
+      ? { x: px, y: py }
+      : { x: 26, y: 29 };
   }
+
+  const direction = shortestDirection( grid, g, target, 'ghost' );
+  if ( direction ) g.dir = direction;
 }
 
 function moveGhost( game, g ) {
