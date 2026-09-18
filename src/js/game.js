@@ -9,6 +9,7 @@ const DIRS = {
   down: { x: 0, y: 1 },
 };
 const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
+const GHOST_TIE_BREAK = [ 'up', 'left', 'down', 'right' ];
 
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
@@ -73,6 +74,68 @@ function canMove( grid, x, y, dir, actor ) {
   return !isWall( grid, tx, ty, actor );
 }
 
+function nextCell( grid, x, y, dir, actor ) {
+  const d = DIRS[ dir ];
+  if ( !d ) return null;
+
+  let nx = x + d.x;
+  const ny = y + d.y;
+  if ( ny === TUNNEL_ROW && ( nx < 0 || nx >= grid[ 0 ].length ) ) {
+    nx = nx < 0 ? grid[ 0 ].length - 1 : 0;
+  }
+  if ( !canMove( grid, x, y, dir, actor ) ) return null;
+  return { x: nx, y: ny };
+}
+
+function nearestTraversable( grid, target, actor ) {
+  const tx = Math.round( target.x );
+  const ty = Math.round( target.y );
+  const isTargetValid = ( x, y ) => (
+    y >= 0 && y < grid.length && x >= 0 && x < grid[ 0 ].length &&
+    grid[ y ][ x ] !== 1 && grid[ y ][ x ] !== 3
+  );
+  if ( isTargetValid( tx, ty ) ) return { x: tx, y: ty };
+
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for ( let y = 0; y < grid.length; y++ ) {
+    for ( let x = 0; x < grid[ 0 ].length; x++ ) {
+      if ( !isTargetValid( x, y ) ) continue;
+      const distance = Math.abs( x - tx ) + Math.abs( y - ty );
+      if ( distance < nearestDistance ) {
+        nearest = { x, y };
+        nearestDistance = distance;
+      }
+    }
+  }
+  return nearest;
+}
+
+function shortestDirection( grid, start, target, actor ) {
+  const goal = nearestTraversable( grid, target, actor );
+  if ( !goal ) return null;
+  if ( start.x === goal.x && start.y === goal.y ) return null;
+
+  const queue = [ { x: start.x, y: start.y, firstDir: null } ];
+  const visited = new Set( [ `${ start.x },${ start.y }` ] );
+  let index = 0;
+
+  while ( index < queue.length ) {
+    const current = queue[ index++ ];
+    for ( const dir of GHOST_TIE_BREAK ) {
+      const cell = nextCell( grid, current.x, current.y, dir, actor );
+      if ( !cell ) continue;
+      const key = `${ cell.x },${ cell.y }`;
+      if ( visited.has( key ) ) continue;
+      const firstDir = current.firstDir || dir;
+      if ( cell.x === goal.x && cell.y === goal.y ) return firstDir;
+      visited.add( key );
+      queue.push( { x: cell.x, y: cell.y, firstDir } );
+    }
+  }
+  return null;
+}
+
 function wrapTunnel( a, width ) {
   if ( Math.round( a.y ) === TUNNEL_ROW ) {
     if ( a.x < 0 ) a.x += width;
@@ -113,32 +176,33 @@ function movePacman( game ) {
 function decideGhost( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+  const distance = g.kind === 'ambusher' ? 4 : 2;
+  const ahead = ( amount ) => {
+    const d = DIRS[ p.dir ];
+    return { x: px + d.x * amount, y: py + d.y * amount };
+  };
 
-  const options = Object.keys( DIRS ).filter(
-    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
-  );
-  // Sin salida (callejon): permitir el giro de 180.
-  const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
-
+  let target;
   if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+    target = { x: px, y: py };
+  } else if ( g.kind === 'ambusher' ) {
+    target = ahead( distance );
+  } else if ( g.kind === 'patroller' ) {
+    target = ahead( distance );
+    if ( grid[ target.y ]?.[ target.x ] === 1 || grid[ target.y ]?.[ target.x ] === 3 ||
+      target.x < 0 || target.x >= grid[ 0 ].length || target.y < 0 || target.y >= grid.length ) {
+      target = { x: 1, y: 1 };
     }
-    g.dir = best;
   } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
+    target = Math.abs( px - Math.round( g.x ) ) + Math.abs( py - Math.round( g.y ) ) >= 8
+      ? { x: px, y: py }
+      : { x: 26, y: 29 };
   }
+
+  const direction = shortestDirection( grid, g, target, 'ghost' );
+  if ( direction ) g.dir = direction;
 }
 
 function moveGhost( game, g ) {
