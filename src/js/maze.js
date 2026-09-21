@@ -58,7 +58,20 @@ const GHOST_STARTS = [
   { x: 14, y: 13, kind: 'erratic' }, // dentro de la pen
 ];
 
+// Zona de patrulla de cada rol (SPEC 02). Dos waypoints transitables por zona:
+// el fantasma alterna entre `a` y `b` cuando no esta en modo alerta.
+// El reparto hace que los fantasmas que salen por la columna 13 (hunter y
+// patroller) vayan a la mitad izquierda y los de la 14 (ambusher y erratic) a
+// la derecha, que es lo que rompe el empate de shortestDirection.
+const GHOST_ZONES = {
+  hunter: { a: { x: 1, y: 1 }, b: { x: 6, y: 5 } }, // arriba-izquierda
+  ambusher: { a: { x: 26, y: 1 }, b: { x: 21, y: 5 } }, // arriba-derecha
+  patroller: { a: { x: 1, y: 29 }, b: { x: 6, y: 26 } }, // abajo-izquierda
+  erratic: { a: { x: 26, y: 29 }, b: { x: 21, y: 26 } }, // abajo-derecha
+};
+
 window.MAZE = MAZE;
 window.TUNNEL_ROW = TUNNEL_ROW;
 window.PACMAN_START = PACMAN_START;
 window.GHOST_STARTS = GHOST_STARTS;
+window.GHOST_ZONES = GHOST_ZONES;

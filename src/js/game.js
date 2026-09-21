@@ -1,6 +1,6 @@
 // game.js
 // Estado y reglas. Depende de globals de maze.js: MAZE, TUNNEL_ROW,
-// PACMAN_START, GHOST_STARTS.
+// PACMAN_START, GHOST_STARTS, GHOST_ZONES.
 
 const DIRS = {
   left: { x: -1, y: 0 },
@@ -13,6 +13,10 @@ const GHOST_TIE_BREAK = [ 'up', 'left', 'down', 'right' ];
 
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
+// Distancia Manhattan maxima (en celdas) entre Pac-Man y el waypoint mas
+// cercano de la zona de un fantasma para que ese fantasma entre en modo
+// alerta y use su logica de rol en lugar de patrullar (SPEC 02).
+const GHOST_ALERT_DISTANCE = 6;
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -43,6 +47,8 @@ function createGame() {
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      zone: GHOST_ZONES[ g.kind ],
+      patrolTarget: 'a',
     } ) ),
   };
 }
@@ -173,35 +179,69 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
-function decideGhost( game, g ) {
+// Distancia Manhattan entre dos posiciones, sobre celdas redondeadas.
+function cellDistance( a, b ) {
+  return Math.abs( Math.round( a.x ) - Math.round( b.x ) ) +
+    Math.abs( Math.round( a.y ) - Math.round( b.y ) );
+}
+
+// Un objetivo proyectado cae fuera del laberinto, sobre un muro o sobre una
+// puerta? Los fantasmas no pueden planificar una ruta hacia ahi.
+function isInvalidTarget( grid, target ) {
+  if ( target.y < 0 || target.y >= grid.length ) return true;
+  if ( target.x < 0 || target.x >= grid[ 0 ].length ) return true;
+  const tile = grid[ target.y ][ target.x ];
+  return tile === 1 || tile === 3;
+}
+
+// Waypoint al que se dirige el fantasma en modo patrulla. Empieza en `a` y
+// cambia al otro extremo solo al llegar, para recorrer la zona entera.
+// Elegir en cada celda "el waypoint mas lejano" no sirve: el fantasma se da la
+// vuelta al cruzar la mediatriz del segmento a-b y se queda oscilando en mitad
+// del recorrido.
+function patrolWaypoint( g ) {
+  if ( cellDistance( g, g.zone[ g.patrolTarget ] ) === 0 ) {
+    g.patrolTarget = g.patrolTarget === 'a' ? 'b' : 'a';
+  }
+  return g.zone[ g.patrolTarget ];
+}
+
+// Modo alerta: Pac-Man esta lo bastante cerca de la zona del fantasma. Se mide
+// contra los waypoints de la zona, no contra el fantasma, para que un fantasma
+// en el extremo lejano tambien reaccione cuando Pac-Man entra en su zona.
+function isAlerted( game, g ) {
+  const p = game.pacman;
+  const nearest = Math.min( cellDistance( p, g.zone.a ), cellDistance( p, g.zone.b ) );
+  return nearest <= GHOST_ALERT_DISTANCE;
+}
+
+// Objetivo de cada rol cuando el fantasma esta en modo alerta (SPEC 01).
+function roleTarget( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
   const px = Math.round( p.x );
   const py = Math.round( p.y );
-  const distance = g.kind === 'ambusher' ? 4 : 2;
   const ahead = ( amount ) => {
     const d = DIRS[ p.dir ];
     return { x: px + d.x * amount, y: py + d.y * amount };
   };
 
-  let target;
-  if ( g.kind === 'hunter' ) {
-    target = { x: px, y: py };
-  } else if ( g.kind === 'ambusher' ) {
-    target = ahead( distance );
-  } else if ( g.kind === 'patroller' ) {
-    target = ahead( distance );
-    if ( grid[ target.y ]?.[ target.x ] === 1 || grid[ target.y ]?.[ target.x ] === 3 ||
-      target.x < 0 || target.x >= grid[ 0 ].length || target.y < 0 || target.y >= grid.length ) {
-      target = { x: 1, y: 1 };
-    }
-  } else {
-    target = Math.abs( px - Math.round( g.x ) ) + Math.abs( py - Math.round( g.y ) ) >= 8
-      ? { x: px, y: py }
-      : { x: 26, y: 29 };
+  if ( g.kind === 'hunter' ) return { x: px, y: py };
+  if ( g.kind === 'ambusher' ) return ahead( 4 );
+
+  if ( g.kind === 'patroller' ) {
+    const target = ahead( 2 );
+    // SPEC 02: el objetivo alternativo es el waypoint `a` de su propia zona.
+    // Antes era (1, 1), que ahora es la esquina del hunter.
+    return isInvalidTarget( grid, target ) ? g.zone.a : target;
   }
 
-  const direction = shortestDirection( grid, g, target, 'ghost' );
+  return cellDistance( g, { x: px, y: py } ) >= 8 ? { x: px, y: py } : g.zone.a;
+}
+
+function decideGhost( game, g ) {
+  const target = isAlerted( game, g ) ? roleTarget( game, g ) : patrolWaypoint( g );
+  const direction = shortestDirection( game.grid, g, target, 'ghost' );
   if ( direction ) g.dir = direction;
 }
 
@@ -232,6 +272,7 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.patrolTarget = 'a';
   } );
 }
 
