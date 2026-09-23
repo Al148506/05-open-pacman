@@ -67,13 +67,14 @@ function drawDoor( ctx, grid ) {
 }
 
 function drawDots( ctx, grid ) {
-  ctx.fillStyle = DOT_COLOR;
   for ( let y = 0; y < grid.length; y++ ) {
     for ( let x = 0; x < grid[ 0 ].length; x++ ) {
-      if ( grid[ y ][ x ] !== 2 ) continue;
+      const v = grid[ y ][ x ];
+      if ( v !== 2 && v !== 4 ) continue;
       const { cx, cy } = cellCenter( x, y );
+      ctx.fillStyle = DOT_COLOR;
       ctx.beginPath();
-      ctx.arc( cx, cy, 2.5, 0, Math.PI * 2 );
+      ctx.arc( cx, cy, v === 4 ? 6 : 2.5, 0, Math.PI * 2 );
       ctx.fill();
     }
   }
@@ -145,6 +146,7 @@ function drawHUD( ctx, game, W ) {
 }
 
 const GHOST_COLORS = [ '#ff0000', '#00ffff', '#ffb8ff', '#ffb852' ];
+const POWER_COLOR = '#2121ff';
 
 function draw( ctx, game, frame ) {
   const grid = game.grid;
@@ -158,7 +160,14 @@ function draw( ctx, game, frame ) {
   drawDoor( ctx, grid );
   drawDots( ctx, grid );
   drawPacman( ctx, game.pacman, frame );
-  game.ghosts.forEach( ( g, i ) => drawGhost( ctx, g, GHOST_COLORS[ i ] || '#ff0000' ) );
+  game.ghosts.forEach( ( g, i ) => {
+    let color = GHOST_COLORS[ i ] || '#ff0000';
+    if ( game.power > 0 ) {
+      const blinking = game.power <= POWER_BLINK && Math.floor( frame / 8 ) % 2 === 0;
+      color = blinking ? '#ffffff' : POWER_COLOR;
+    }
+    drawGhost( ctx, g, color );
+  } );
   drawHUD( ctx, game, W );
 }
 

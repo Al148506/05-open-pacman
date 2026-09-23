@@ -14,6 +14,11 @@ const GHOST_TIE_BREAK = [ 'up', 'left', 'down', 'right' ];
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 
+const POWER_DURATION = 360; // frames de poder (~6s a 60fps)
+const POWER_BLINK = 90; // frames finales de aviso (~1.5s)
+const POWER_SPEED = 0.06; // 60% de GHOST_SPEED
+const GHOST_POINTS = [ 100, 200, 400, 800 ];
+
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
 function createGame() {
@@ -22,13 +27,15 @@ function createGame() {
   grid[ PACMAN_START.y ][ PACMAN_START.x ] = 0;
 
   let dots = 0;
-  for ( const row of grid ) for ( const v of row ) if ( v === 2 ) dots++;
+  for ( const row of grid ) for ( const v of row ) if ( v === 2 || v === 4 ) dots++;
 
   return {
     state: 'start',
     score: 0,
     lives: 3,
     dotsRemaining: dots,
+    power: 0, // frames restantes de estado vulnerable; 0 = normal
+    ghostChain: 0, // indice en GHOST_POINTS del proximo fantasma comido
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -157,11 +164,24 @@ function movePacman( game ) {
       p.dir = p.nextDir;
       p.nextDir = null;
     }
-    // Comer dot.
+    // Comer dot / power-pellet.
     if ( grid[ p.y ][ p.x ] === 2 ) {
       grid[ p.y ][ p.x ] = 0;
       game.score += 10;
       game.dotsRemaining--;
+    } else if ( grid[ p.y ][ p.x ] === 4 ) {
+      grid[ p.y ][ p.x ] = 0;
+      game.score += 50;
+      game.dotsRemaining--;
+      if ( game.power === 0 ) {
+        // Al activarse el poder, cada fantasma invierte su direccion una vez.
+        game.ghosts.forEach( ( g ) => {
+          g.dir = OPPOSITE[ g.dir ] || 'up';
+          g.keepDir = true; // preserva la inversion hasta la proxima decision
+        } );
+      }
+      game.power = POWER_DURATION;
+      game.ghostChain = 0;
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
@@ -175,6 +195,21 @@ function movePacman( game ) {
 
 function decideGhost( game, g ) {
   const grid = game.grid;
+
+  // Vulnerable: giro aleatorio en cada interseccion, evitando marcha atras
+  // si hay alternativas.
+  if ( g.keepDir ) { g.keepDir = false; return; }
+  if ( game.power > 0 ) {
+    const options = GHOST_TIE_BREAK.filter( ( dir ) =>
+      canMove( grid, g.x, g.y, dir, 'ghost' ) );
+    if ( options.length > 0 ) {
+      const noReverse = options.filter( ( dir ) => dir !== OPPOSITE[ g.dir ] );
+      const pool = noReverse.length > 0 ? noReverse : options;
+      g.dir = pool[ Math.floor( Math.random() * pool.length ) ];
+    }
+    return;
+  }
+
   const p = game.pacman;
   const px = Math.round( p.x );
   const py = Math.round( p.y );
@@ -208,6 +243,7 @@ function decideGhost( game, g ) {
 function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
+  g.speed = game.power > 0 ? POWER_SPEED : GHOST_SPEED;
 
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
@@ -217,8 +253,24 @@ function moveGhost( game, g ) {
   }
 
   const d = DIRS[ g.dir ];
-  g.x += d.x * g.speed;
-  g.y += d.y * g.speed;
+  let nx = g.x + d.x * g.speed;
+  let ny = g.y + d.y * g.speed;
+
+  // Al cruzar el centro de una celda, quedarse exactamente en el centro para
+  // que el bloque de alineacion decida el siguiente tramo y valide el muro.
+  // Necesario con velocidades no divisoras (p.ej. POWER_SPEED 0.06).
+  if ( d.x !== 0 ) {
+    const center = d.x > 0 ? Math.floor( g.x ) + 1 : Math.ceil( g.x ) - 1;
+    if ( ( d.x > 0 && nx >= center ) || ( d.x < 0 && nx <= center ) ) nx = center;
+  }
+  if ( d.y !== 0 ) {
+    const center = d.y > 0 ? Math.floor( g.y ) + 1 : Math.ceil( g.y ) - 1;
+    if ( ( d.y > 0 && ny >= center ) || ( d.y < 0 && ny <= center ) ) ny = center;
+  }
+
+  if ( nx === g.x && ny === g.y ) return;
+  g.x = nx;
+  g.y = ny;
   wrapTunnel( g, width );
 }
 
@@ -232,6 +284,7 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.keepDir = false;
   } );
 }
 
@@ -243,17 +296,32 @@ function update( game ) {
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
-  for ( const g of game.ghosts ) {
-    if ( collides( game.pacman, g ) ) {
-      game.lives--;
-      if ( game.lives <= 0 ) {
-        game.state = 'lost';
-        return;
+  if ( game.power > 0 ) {
+    // Poder activo: Pac-Man se come a los fantasmas vulnerables.
+    for ( let i = 0; i < game.ghosts.length; i++ ) {
+      const g = game.ghosts[ i ];
+      if ( !collides( game.pacman, g ) ) continue;
+      game.score += GHOST_POINTS[ game.ghostChain ];
+      game.ghostChain = Math.min( game.ghostChain + 1, 3 );
+      g.x = GHOST_STARTS[ i ].x;
+      g.y = GHOST_STARTS[ i ].y;
+      g.dir = 'up';
+    }
+  } else {
+    for ( const g of game.ghosts ) {
+      if ( collides( game.pacman, g ) ) {
+        game.lives--;
+        if ( game.lives <= 0 ) {
+          game.state = 'lost';
+          return;
+        }
+        resetPositions( game );
+        break;
       }
-      resetPositions( game );
-      break;
     }
   }
+
+  if ( game.power > 0 ) game.power = Math.max( 0, game.power - 1 );
 
   if ( game.dotsRemaining <= 0 ) game.state = 'won';
 }
